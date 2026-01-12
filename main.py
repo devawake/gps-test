@@ -95,7 +95,7 @@ def main():
     print("\nStarting live view... (Ctrl+C to quit)")
     time.sleep(1)
 
-    # State variables to keep track of latest data
+    # State variables
     latest_gps = {
         "time": "N/A",
         "sats": "0",
@@ -103,59 +103,75 @@ def main():
         "lat": "0.0",
         "lon": "0.0",
         "speed": "0.0",
-        "course": "0.0"
+        "course": "0.0",
+        "last_seen": 0,
+        "raw": ""
     }
+    
+    last_ui_update = 0
 
     try:
         while True:
+            # Short serial timeout ensures we can catch KeyboardInterrupt frequently
             line = ser.readline().decode('ascii', errors='replace').strip()
             mag_str = read_magnetometer(mag_bus)
             
-            message_received = False
-            if line.startswith('$G'):
-                try:
-                    msg = pynmea2.parse(line)
-                    latest_gps["time"] = getattr(msg, 'timestamp', latest_gps["time"])
+            if line:
+                latest_gps["raw"] = line[:50] # Store preview
+                if line.startswith('$G'):
+                    try:
+                        msg = pynmea2.parse(line)
+                        latest_gps["time"] = str(getattr(msg, 'timestamp', latest_gps["time"]))
+                        latest_gps["last_seen"] = time.time()
+                        
+                        if isinstance(msg, pynmea2.types.talker.GGA):
+                            latest_gps["sats"] = getattr(msg, 'num_sats', latest_gps["sats"])
+                            latest_gps["alt"] = f"{getattr(msg, 'altitude', 'N/A')} {getattr(msg, 'altitude_units', '')}"
+                            latest_gps["lat"] = msg.latitude
+                            latest_gps["lon"] = msg.longitude
+                        
+                        elif isinstance(msg, pynmea2.types.talker.RMC):
+                            latest_gps["speed"] = getattr(msg, 'spd_over_grnd', latest_gps["speed"])
+                            latest_gps["course"] = getattr(msg, 'true_course', latest_gps["course"])
                     
-                    if isinstance(msg, pynmea2.types.talker.GGA):
-                        latest_gps["sats"] = getattr(msg, 'num_sats', latest_gps["sats"])
-                        latest_gps["alt"] = f"{getattr(msg, 'altitude', 'N/A')} {getattr(msg, 'altitude_units', '')}"
-                        latest_gps["lat"] = msg.latitude
-                        latest_gps["lon"] = msg.longitude
-                        message_received = True
-                    
-                    elif isinstance(msg, pynmea2.types.talker.RMC):
-                        latest_gps["speed"] = getattr(msg, 'spd_over_grnd', latest_gps["speed"])
-                        latest_gps["course"] = getattr(msg, 'true_course', latest_gps["course"])
-                        message_received = True
+                    except pynmea2.ParseError:
+                        pass
+
+            # Update UI at ~5Hz to keep it readable and responsive
+            if time.time() - last_ui_update > 0.2:
+                last_ui_update = time.time()
                 
-                except pynmea2.ParseError:
-                    pass
-            
-            # Update display on every message or if no data for a bit
-            # We use \033[H to move cursor to top instead of clear() to avoid flickering
-            print("\033[H\033[J", end="") # Clear screen and move to home
-            print("========================================")
-            print("      ROCKET TELEMETRY DASHBOARD        ")
-            print("========================================")
-            print(f" TIME:      {latest_gps['time']}")
-            print(f" SATELLITES: {latest_gps['sats']}")
-            print(f" MAG DATA:  {mag_str}")
-            print("----------------------------------------")
-            print(f" LATITUDE:  {latest_gps['lat']}")
-            print(f" LONGITUDE: {latest_gps['lon']}")
-            print(f" ALTITUDE:  {latest_gps['alt']}")
-            print("----------------------------------------")
-            print(f" SPEED:     {latest_gps['speed']} knots")
-            print(f" COURSE:    {latest_gps['course']}°")
-            print("========================================")
-            print(" Press Ctrl+C to exit and stop logging.")
-            
-            # Small delay to prevent CPU hogging
-            time.sleep(0.1)
+                # Connection status check
+                gps_alive = (time.time() - latest_gps["last_seen"]) < 2.0
+                status_text = "[ OK ]" if gps_alive else "[ OFFLINE ]"
+                if not latest_gps["last_seen"]: status_text = "[ WAITING ]"
+
+                # Clear screen (Move cursor to top-left)
+                print("\033[H\033[2J", end="") 
+                print("========================================")
+                print(f" ROCKET TELEMETRY     STATUS: {status_text}")
+                print("========================================")
+                print(f" GPS TIME:   {latest_gps['time']}")
+                print(f" SATELLITES: {latest_gps['sats']}")
+                print(f" MAG DATA:   {mag_str}")
+                print("----------------------------------------")
+                print(f" LATITUDE:   {latest_gps['lat']}")
+                print(f" LONGITUDE:  {latest_gps['lon']}")
+                print(f" ALTITUDE:   {latest_gps['alt']}")
+                print("----------------------------------------")
+                print(f" SPEED:      {latest_gps['speed']} kn | CRS: {latest_gps['course']}°")
+                print("----------------------------------------")
+                print(f" RAW: {latest_gps['raw']}")
+                print("========================================")
+                print(" [Ctrl+C] to Exit")
 
     except KeyboardInterrupt:
-        print("\nExiting...")
+        print("\nStopping telemetry...")
+    except Exception as e:
+        print(f"\nUnexpected error: {e}")
+    finally:
+        if ser: ser.close()
+        if mag_bus: mag_bus.close()
     finally:
         if ser: ser.close()
         if mag_bus: mag_bus.close()

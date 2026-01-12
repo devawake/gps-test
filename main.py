@@ -95,37 +95,64 @@ def main():
     print("\nStarting live view... (Ctrl+C to quit)")
     time.sleep(1)
 
+    # State variables to keep track of latest data
+    latest_gps = {
+        "time": "N/A",
+        "sats": "0",
+        "alt": "N/A",
+        "lat": "0.0",
+        "lon": "0.0",
+        "speed": "0.0",
+        "course": "0.0"
+    }
+
     try:
         while True:
             line = ser.readline().decode('ascii', errors='replace').strip()
             mag_str = read_magnetometer(mag_bus)
             
+            message_received = False
             if line.startswith('$G'):
                 try:
                     msg = pynmea2.parse(line)
-                    if isinstance(msg, (pynmea2.types.talker.GGA, pynmea2.types.talker.RMC)):
-                        # clear_screen() # Uncomment for a cleaner persistent look
-                        timestamp = getattr(msg, 'timestamp', 'N/A')
-                        
-                        if isinstance(msg, pynmea2.types.talker.GGA):
-                            sats = getattr(msg, 'num_sats', '0')
-                            alt = getattr(msg, 'altitude', 'None')
-                            unit = getattr(msg, 'altitude_units', '')
-                            print(f"[{timestamp}] SATS: {sats} | ALT: {alt} {unit} | MAG: {mag_str}")
-                            print(f"      POS: {msg.latitude}, {msg.longitude}")
-                        
-                        elif isinstance(msg, pynmea2.types.talker.RMC):
-                            speed = getattr(msg, 'spd_over_grnd', '0.0') # pynmea2 uses spd_over_grnd for RMC
-                            course = getattr(msg, 'true_course', '0.0')
-                            print(f"[{timestamp}] SPD: {speed} kn | CRS: {course} | MAG: {mag_str}")
+                    latest_gps["time"] = getattr(msg, 'timestamp', latest_gps["time"])
+                    
+                    if isinstance(msg, pynmea2.types.talker.GGA):
+                        latest_gps["sats"] = getattr(msg, 'num_sats', latest_gps["sats"])
+                        latest_gps["alt"] = f"{getattr(msg, 'altitude', 'N/A')} {getattr(msg, 'altitude_units', '')}"
+                        latest_gps["lat"] = msg.latitude
+                        latest_gps["lon"] = msg.longitude
+                        message_received = True
+                    
+                    elif isinstance(msg, pynmea2.types.talker.RMC):
+                        latest_gps["speed"] = getattr(msg, 'spd_over_grnd', latest_gps["speed"])
+                        latest_gps["course"] = getattr(msg, 'true_course', latest_gps["course"])
+                        message_received = True
                 
                 except pynmea2.ParseError:
                     pass
             
-            # If no GPS line but we want to see Mag
-            elif not line:
-                # print(f"Waiting for GPS... | MAG: {mag_str}", end='\r')
-                pass
+            # Update display on every message or if no data for a bit
+            # We use \033[H to move cursor to top instead of clear() to avoid flickering
+            print("\033[H\033[J", end="") # Clear screen and move to home
+            print("========================================")
+            print("      ROCKET TELEMETRY DASHBOARD        ")
+            print("========================================")
+            print(f" TIME:      {latest_gps['time']}")
+            print(f" SATELLITES: {latest_gps['sats']}")
+            print(f" MAG DATA:  {mag_str}")
+            print("----------------------------------------")
+            print(f" LATITUDE:  {latest_gps['lat']}")
+            print(f" LONGITUDE: {latest_gps['lon']}")
+            print(f" ALTITUDE:  {latest_gps['alt']}")
+            print("----------------------------------------")
+            print(f" SPEED:     {latest_gps['speed']} knots")
+            print(f" COURSE:    {latest_gps['course']}°")
+            print("========================================")
+            print(" Press Ctrl+C to exit and stop logging.")
+            
+            # Small delay to prevent CPU hogging
+            time.sleep(0.1)
 
     except KeyboardInterrupt:
         print("\nExiting...")

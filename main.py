@@ -49,30 +49,47 @@ def main():
     # Try different baud rates
     ser = None
     for baud in BAUD_RATES:
-        print(f"Checking baud rate {baud}...")
+        print(f"Checking baud rate {baud}...", end=" ", flush=True)
         try:
-            temp_ser = serial.Serial(GPS_PORT, baudrate=baud, timeout=2)
-            # Wait for some data
-            start_time = time.time()
-            valid_nmea = False
-            while time.time() - start_time < 3:
-                line = temp_ser.readline().decode('ascii', errors='replace')
-                if '$G' in line:
-                    valid_nmea = True
-                    break
+            # Short timeout for scanning
+            temp_ser = serial.Serial(GPS_PORT, baudrate=baud, timeout=1)
             
-            if valid_nmea:
-                print(f"[OK] Valid NMEA data found at {baud} baud.")
+            # Flush buffers
+            temp_ser.reset_input_buffer()
+            
+            # Read a chunk of data
+            data = temp_ser.read(100) # Read up to 100 bytes
+            
+            if not data:
+                print("No data received.")
+                temp_ser.close()
+                continue
+            
+            # Convert to string to check for NMEA markers
+            decoded_data = data.decode('ascii', errors='replace')
+            if '$G' in decoded_data:
+                print(f"[OK] Valid NMEA data found!")
+                # Re-open with a slightly longer timeout for stable reading
+                temp_ser.timeout = 0.5
                 ser = temp_ser
                 break
             else:
+                print(f"Data received but not NMEA: {repr(decoded_data[:20])}...")
                 temp_ser.close()
+                
         except Exception as e:
-            print(f"Failed to open {GPS_PORT} at {baud}: {e}")
+            print(f"Error: {e}")
 
     if not ser:
-        print("[ERROR] Could not find GPS data on any standard baud rate.")
-        print("Ensure UART is enabled in raspi-config and wiring is correct.")
+        print("\n" + "="*40)
+        print("DIAGNOSTICS & TROUBLESHOOTING:")
+        print("1. WIRING: Ensure GPS 'T' is connected to Pi GPIO 15 (RX).")
+        print("2. WIRING: Ensure GPS 'R' is connected to Pi GPIO 14 (TX).")
+        print("3. POWER: Check if the LED on the GPS module is on.")
+        print("4. CONFIG: Did you run 'sudo raspi-config' and DISABLE the Serial Console?")
+        print("   (Check /boot/firmware/cmdline.txt - it should NOT contain 'console=serial0')")
+        print("5. PINOUT: Verify you are using Physical Pins 8 and 10.")
+        print("="*40)
         return
 
     print("\nStarting live view... (Ctrl+C to quit)")

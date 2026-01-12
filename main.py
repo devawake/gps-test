@@ -108,11 +108,16 @@ def main():
                         timestamp = getattr(msg, 'timestamp', 'N/A')
                         
                         if isinstance(msg, pynmea2.types.talker.GGA):
-                            print(f"[{timestamp}] SATS: {msg.num_sats} | ALT: {msg.altitude} {msg.altitude_units} | MAG: {mag_str}")
+                            sats = getattr(msg, 'num_sats', '0')
+                            alt = getattr(msg, 'altitude', 'None')
+                            unit = getattr(msg, 'altitude_units', '')
+                            print(f"[{timestamp}] SATS: {sats} | ALT: {alt} {unit} | MAG: {mag_str}")
                             print(f"      POS: {msg.latitude}, {msg.longitude}")
                         
                         elif isinstance(msg, pynmea2.types.talker.RMC):
-                            print(f"[{timestamp}] SPD: {msg.speed} kn | CRS: {msg.true_course} | MAG: {mag_str}")
+                            speed = getattr(msg, 'spd_over_grnd', '0.0') # pynmea2 uses spd_over_grnd for RMC
+                            course = getattr(msg, 'true_course', '0.0')
+                            print(f"[{timestamp}] SPD: {speed} kn | CRS: {course} | MAG: {mag_str}")
                 
                 except pynmea2.ParseError:
                     pass

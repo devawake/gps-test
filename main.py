@@ -172,9 +172,6 @@ def main():
     finally:
         if ser: ser.close()
         if mag_bus: mag_bus.close()
-    finally:
-        if ser: ser.close()
-        if mag_bus: mag_bus.close()
 
 if __name__ == "__main__":
     main()

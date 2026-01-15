@@ -99,14 +99,24 @@ def main():
     latest_gps = {
         "time": "N/A",
         "sats": "0",
+        "sats_in_view": "0",
         "alt": "N/A",
-        "lat": "0.0",
-        "lon": "0.0",
-        "speed": "0.0",
-        "course": "0.0",
+        "lat": "N/A",
+        "lon": "N/A",
+        "speed": "N/A",
+        "course": "N/A",
+        "fix_quality": 0,
         "last_seen": 0,
         "raw": ""
     }
+
+    # Logging setup
+    log_dir = "logs"
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+    log_filename = os.path.join(log_dir, f"gps_log_{time.strftime('%Y%m%d_%H%M%S')}.txt")
+    log_file = open(log_filename, "a")
+    print(f"[INFO] Logging to {log_filename}")
     
     last_ui_update = 0
 
@@ -117,24 +127,41 @@ def main():
             mag_str = read_magnetometer(mag_bus)
             
             if line:
-                latest_gps["raw"] = line[:50] # Store preview
+                latest_gps["raw"] = line[:60] # Store preview
+                # Log raw data with local system time
+                log_file.write(f"{time.time()},{line}\n")
+                log_file.flush()
+
                 if line.startswith('$G'):
                     try:
                         msg = pynmea2.parse(line)
-                        latest_gps["time"] = str(getattr(msg, 'timestamp', latest_gps["time"]))
                         latest_gps["last_seen"] = time.time()
                         
+                        # Use timestamp from GPS if available
+                        if hasattr(msg, 'timestamp') and msg.timestamp:
+                            latest_gps["time"] = str(msg.timestamp)
+
                         if isinstance(msg, pynmea2.types.talker.GGA):
                             latest_gps["sats"] = getattr(msg, 'num_sats', latest_gps["sats"])
-                            latest_gps["alt"] = f"{getattr(msg, 'altitude', 'N/A')} {getattr(msg, 'altitude_units', '')}"
-                            latest_gps["lat"] = msg.latitude
-                            latest_gps["lon"] = msg.longitude
+                            latest_gps["fix_quality"] = msg.gps_qual
+                            # Only update position if we have a fix (quality > 0)
+                            if msg.gps_qual > 0:
+                                latest_gps["lat"] = f"{msg.latitude:.6f}"
+                                latest_gps["lon"] = f"{msg.longitude:.6f}"
+                                latest_gps["alt"] = f"{msg.altitude} {msg.altitude_units}"
                         
                         elif isinstance(msg, pynmea2.types.talker.RMC):
-                            latest_gps["speed"] = getattr(msg, 'spd_over_grnd', latest_gps["speed"])
-                            latest_gps["course"] = getattr(msg, 'true_course', latest_gps["course"])
+                            # Status 'A' means Active (valid), 'V' means Void (invalid)
+                            if msg.status == 'A':
+                                latest_gps["lat"] = f"{msg.latitude:.6f}"
+                                latest_gps["lon"] = f"{msg.longitude:.6f}"
+                                latest_gps["speed"] = f"{msg.spd_over_grnd:.1f}"
+                                latest_gps["course"] = f"{msg.true_course:.1f}" if msg.true_course else "0.0"
+
+                        elif isinstance(msg, pynmea2.types.talker.GSV):
+                            latest_gps["sats_in_view"] = getattr(msg, 'num_sv_in_view', latest_gps["sats_in_view"])
                     
-                    except pynmea2.ParseError:
+                    except (pynmea2.ParseError, AttributeError, ValueError):
                         pass
 
             # Update UI at ~5Hz to keep it readable and responsive
@@ -143,26 +170,31 @@ def main():
                 
                 # Connection status check
                 gps_alive = (time.time() - latest_gps["last_seen"]) < 2.0
-                status_text = "[ OK ]" if gps_alive else "[ OFFLINE ]"
-                if not latest_gps["last_seen"]: status_text = "[ WAITING ]"
+                if not gps_alive:
+                    status_text = "\033[91m[ OFFLINE ]\033[0m"
+                elif latest_gps["fix_quality"] == 0:
+                    status_text = "\033[93m[ SEARCHING ]\033[0m"
+                else:
+                    status_text = "\033[92m[ LOCKED ]\033[0m"
 
                 # Clear screen (Move cursor to top-left)
-                print("\033[H\033[2J", end="") 
+                print("\033[H", end="") 
                 print("========================================")
                 print(f" ROCKET TELEMETRY     STATUS: {status_text}")
                 print("========================================")
-                print(f" GPS TIME:   {latest_gps['time']}")
-                print(f" SATELLITES: {latest_gps['sats']}")
+                print(f" GPS TIME:   {latest_gps['time']:15}")
+                print(f" SATELLITES: {latest_gps['sats']} (In View: {latest_gps['sats_in_view']})")
                 print(f" MAG DATA:   {mag_str}")
                 print("----------------------------------------")
-                print(f" LATITUDE:   {latest_gps['lat']}")
-                print(f" LONGITUDE:  {latest_gps['lon']}")
-                print(f" ALTITUDE:   {latest_gps['alt']}")
+                print(f" LATITUDE:   {latest_gps['lat']:15}")
+                print(f" LONGITUDE:  {latest_gps['lon']:15}")
+                print(f" ALTITUDE:   {latest_gps['alt']:15}")
                 print("----------------------------------------")
-                print(f" SPEED:      {latest_gps['speed']} kn | CRS: {latest_gps['course']}°")
+                print(f" SPEED:      {latest_gps['speed']:7} kn | CRS: {latest_gps['course']}°")
                 print("----------------------------------------")
-                print(f" RAW: {latest_gps['raw']}")
+                print(f" RAW: {latest_gps['raw'][:34]:34}")
                 print("========================================")
+                print(f" LOGGING TO: {log_filename}")
                 print(" [Ctrl+C] to Exit")
 
     except KeyboardInterrupt:
@@ -172,6 +204,7 @@ def main():
     finally:
         if ser: ser.close()
         if mag_bus: mag_bus.close()
+        if 'log_file' in locals(): log_file.close()
 
 if __name__ == "__main__":
     main()

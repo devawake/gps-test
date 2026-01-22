@@ -6,13 +6,13 @@ Run this on one Pi to send test messages.
 Run radio_rx.py on the other Pi to receive them.
 
 Usage: python3 radio_tx.py
+
+If you get initialization errors after running radio_diag.py,
+try rebooting the Pi first to release the SPI bus.
 """
 
 import time
-import board
-import busio
-import digitalio
-import adafruit_rfm69
+import sys
 
 # ========================================
 # CONFIGURATION - Modify as needed
@@ -27,44 +27,82 @@ DEST_ID = 2                 # Destination node ID
 # Set to None for no encryption
 ENCRYPTION_KEY = b'\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10'
 
-# Pin configuration
-CS_PIN = board.D8           # GPIO8 - Chip Select
-RESET_PIN = board.D25       # GPIO25 - Reset
-
 # Message settings
 SEND_INTERVAL = 2.0         # Seconds between messages
 
 # ========================================
 
 
+def cleanup_gpio():
+    """Try to cleanup any existing GPIO usage."""
+    try:
+        import RPi.GPIO as GPIO
+        GPIO.setwarnings(False)
+        GPIO.cleanup()
+        print("   🧹 Cleaned up previous GPIO state")
+    except:
+        pass
+
+
 def setup_radio():
     """Initialize the RFM69 radio."""
     print("🔧 Initializing radio...")
     
-    # Setup SPI
-    spi = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
+    # First, try to cleanup any lingering GPIO state
+    cleanup_gpio()
+    time.sleep(0.1)
     
-    # Setup pins
-    cs = digitalio.DigitalInOut(CS_PIN)
-    reset = digitalio.DigitalInOut(RESET_PIN)
+    # Import Adafruit libraries
+    try:
+        import board
+        import busio
+        import digitalio
+        import adafruit_rfm69
+    except ImportError as e:
+        print(f"   ❌ Missing library: {e}")
+        print("   Run: pip install adafruit-circuitpython-rfm69")
+        sys.exit(1)
     
-    # Initialize radio
-    rfm69 = adafruit_rfm69.RFM69(spi, cs, reset, RADIO_FREQ_MHZ)
+    # Pin configuration
+    CS_PIN = board.D8           # GPIO8 - Chip Select
+    RESET_PIN = board.D25       # GPIO25 - Reset
     
-    # Configure radio
-    rfm69.tx_power = TX_POWER
-    rfm69.node = NODE_ID
-    rfm69.destination = DEST_ID
-    
-    if ENCRYPTION_KEY:
-        rfm69.encryption_key = ENCRYPTION_KEY
-        print("   🔐 Encryption enabled")
-    
-    print(f"   📻 Frequency: {RADIO_FREQ_MHZ} MHz")
-    print(f"   📶 TX Power: {TX_POWER} dBm")
-    print(f"   🏷️  Node ID: {NODE_ID} -> Destination: {DEST_ID}")
-    
-    return rfm69
+    try:
+        # Setup SPI
+        spi = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
+        
+        # Setup pins
+        cs = digitalio.DigitalInOut(CS_PIN)
+        reset = digitalio.DigitalInOut(RESET_PIN)
+        
+        # Initialize radio
+        rfm69 = adafruit_rfm69.RFM69(spi, cs, reset, RADIO_FREQ_MHZ)
+        
+        # Configure radio
+        rfm69.tx_power = TX_POWER
+        rfm69.node = NODE_ID
+        rfm69.destination = DEST_ID
+        
+        if ENCRYPTION_KEY:
+            rfm69.encryption_key = ENCRYPTION_KEY
+            print("   🔐 Encryption enabled")
+        
+        print(f"   📻 Frequency: {RADIO_FREQ_MHZ} MHz")
+        print(f"   📶 TX Power: {TX_POWER} dBm")
+        print(f"   🏷️  Node ID: {NODE_ID} -> Destination: {DEST_ID}")
+        
+        return rfm69
+        
+    except RuntimeError as e:
+        print(f"\n   ❌ Radio initialization error: {e}")
+        print("\n   💡 Try these solutions:")
+        print("      1. Reboot the Pi: sudo reboot")
+        print("      2. Check that no other script is using SPI")
+        print("      3. Run: python3 radio_check.py")
+        return None
+    except Exception as e:
+        print(f"\n   ❌ Unexpected error: {e}")
+        return None
 
 
 def main():
@@ -72,12 +110,10 @@ def main():
     print("   RFM69HCW Radio Transmitter")
     print("=" * 50)
     
-    try:
-        rfm69 = setup_radio()
-    except Exception as e:
-        print(f"\n❌ Failed to initialize radio: {e}")
-        print("   Run 'python3 radio_check.py' to diagnose issues.")
-        return
+    rfm69 = setup_radio()
+    if rfm69 is None:
+        print("\n❌ Failed to initialize radio.")
+        sys.exit(1)
     
     print(f"\n✅ Radio ready! Sending messages every {SEND_INTERVAL}s")
     print("   Press Ctrl+C to stop\n")

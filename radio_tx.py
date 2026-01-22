@@ -33,15 +33,15 @@ SEND_INTERVAL = 2.0         # Seconds between messages
 # ========================================
 
 
-def cleanup_gpio():
-    """Try to cleanup any existing GPIO usage."""
-    try:
-        import RPi.GPIO as GPIO
-        GPIO.setwarnings(False)
-        GPIO.cleanup()
-        print("   🧹 Cleaned up previous GPIO state")
-    except:
-        pass
+# def cleanup_gpio():
+#     """Try to cleanup any existing GPIO usage."""
+#     try:
+#         import RPi.GPIO as GPIO
+#         GPIO.setwarnings(False)
+#         GPIO.cleanup()
+#         print("   🧹 Cleaned up previous GPIO state")
+#     except:
+#         pass
 
 
 def setup_radio():
@@ -49,7 +49,7 @@ def setup_radio():
     print("🔧 Initializing radio...")
     
     # First, try to cleanup any lingering GPIO state
-    cleanup_gpio()
+    # cleanup_gpio()  # Removed as it can conflict with Blinka
     time.sleep(0.1)
     
     # Import Adafruit libraries
@@ -73,10 +73,50 @@ def setup_radio():
         
         # Setup pins
         cs = digitalio.DigitalInOut(CS_PIN)
-        reset = digitalio.DigitalInOut(RESET_PIN)
+        cs.direction = digitalio.Direction.OUTPUT
+        cs.value = True
         
-        # Initialize radio
-        rfm69 = adafruit_rfm69.RFM69(spi, cs, reset, RADIO_FREQ_MHZ)
+        reset = digitalio.DigitalInOut(RESET_PIN)
+        reset.direction = digitalio.Direction.OUTPUT
+        
+        # Manual Reset sequence (100ms High pulse)
+        print("   🔄 Resetting radio hardware...")
+        reset.value = False
+        time.sleep(0.05)
+        reset.value = True
+        time.sleep(0.1)
+        reset.value = False
+        time.sleep(0.1)
+        
+        # Debug: Try a raw version read before library init
+        print("   🔍 Checking radio version register...")
+        version = 0x00
+        try:
+            # We need to lock the SPI bus to use it
+            while not spi.try_lock():
+                pass
+            try:
+                # Use a very slow speed for the initial check
+                spi.configure(baudrate=100000, polarity=0, phase=0)
+                cs.value = False
+                # Read register 0x10
+                out_buf = bytearray([0x10 & 0x7F, 0x00])
+                in_buf = bytearray(2)
+                spi.write_readinto(out_buf, in_buf)
+                version = in_buf[1]
+                cs.value = True
+            finally:
+                spi.unlock()
+            
+            print(f"   📖 Register 0x10 read: {hex(version)}")
+            if version != 0x24:
+                print(f"   ⚠️  Unexpected version {hex(version)}! Expected 0x24.")
+        except Exception as e:
+            print(f"   ⚠️  Could not perform raw version check: {e}")
+
+        # Initialize radio (pass reset=None since we already did it)
+        print("   🚀 Initializing RFM69 library...")
+        rfm69 = adafruit_rfm69.RFM69(spi, cs, None, RADIO_FREQ_MHZ)
         
         # Configure radio
         rfm69.tx_power = TX_POWER
@@ -88,17 +128,17 @@ def setup_radio():
             print("   🔐 Encryption enabled")
         
         print(f"   📻 Frequency: {RADIO_FREQ_MHZ} MHz")
-        print(f"   📶 TX Power: {TX_POWER} dBm")
-        print(f"   🏷️  Node ID: {NODE_ID} -> Destination: {DEST_ID}")
+        print(f"   🏷️  Node ID: {NODE_ID} -> Target ID: {DEST_ID}")
         
         return rfm69
         
     except RuntimeError as e:
         print(f"\n   ❌ Radio initialization error: {e}")
-        print("\n   💡 Try these solutions:")
-        print("      1. Reboot the Pi: sudo reboot")
-        print("      2. Check that no other script is using SPI")
-        print("      3. Run: python3 radio_check.py")
+        if "Invalid RFM69 version" in str(e):
+            print("\n   💡 Troubleshooting specific to version error:")
+            print("      - Your 'radio_diag.py' proved the wiring is correct.")
+            print("      - This usually means a conflict between the kernel SPI driver and the library.")
+            print("      - Try running: 'sudo rmmod spidev' then run this script.")
         return None
     except Exception as e:
         print(f"\n   ❌ Unexpected error: {e}")

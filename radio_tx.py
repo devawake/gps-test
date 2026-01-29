@@ -82,38 +82,43 @@ def setup_radio():
         # 3. Setup SPI (standard SPI0)
         spi = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
         
-        # 4. Setup Reset Pin
-        # We'll use the library's pin object
+        # 4. Setup Control Pins
+        # Reset is active high for RFM69HCW
         reset = digitalio.DigitalInOut(RESET_PIN)
         reset.direction = digitalio.Direction.OUTPUT
         
-        # 5. Hardware Reset (Datasheet process)
-        print("   🔄 Resetting radio hardware...")
-        reset.value = True
-        time.sleep(0.1)
-        reset.value = False
-        time.sleep(0.2)  # Wait for radio to wake up
-        
-        # 6. Setup CS Pin
         cs = digitalio.DigitalInOut(CS_PIN)
         cs.direction = digitalio.Direction.OUTPUT
-        cs.value = True
+        cs.value = True # Idle High
         
-        # 7. MANUAL DIAGNOSTIC CHECK
-        # Try to read the version register manually before the library starts
-        print("   � Performing manual version check (1MHz)...")
+        # 5. Robust Hardware Reset
+        print("   🔄 Resetting radio hardware...")
+        reset.value = False
+        time.sleep(0.01)
+        reset.value = True
+        time.sleep(0.1)   # Pulse high
+        reset.value = False
+        time.sleep(0.1)   # Wait to settle
+        
+        # 6. MANUAL DIAGNOSTIC CHECK (Using a single transaction)
+        print("   🔍 Performing manual version check (1MHz)...")
         version = 0x00
         while not spi.try_lock():
             pass
         try:
+            # Configure SPI
             spi.configure(baudrate=1000000, polarity=0, phase=0)
+            
+            # Single transaction: Write address then Read back
+            # Reg 0x10 is the version register
+            out_buf = bytearray([0x10 & 0x7F, 0x00])
+            in_buf = bytearray(2)
+            
             cs.value = False
-            # Read Reg 0x10: Send 0x10, then read response
-            spi.write(bytearray([0x10 & 0x7F]))
-            result = bytearray(1)
-            spi.readinto(result)
-            version = result[0]
+            spi.write_readinto(out_buf, in_buf)
             cs.value = True
+            
+            version = in_buf[1]
         finally:
             spi.unlock()
             
@@ -122,14 +127,12 @@ def setup_radio():
         if version != 0x24:
             print(f"   ⚠️  Manual check failed! Expected 0x24, got {hex(version)}.")
             if version == 0x00:
-                print("      (Probable MISO connection issue or CS conflict)")
-            elif version == 0xFF:
-                print("      (Probable MOSI/SCK connection issue)")
+                print("      (Still getting 0x0. Check physical Pin 24 connection!)")
         
         # 8. Initialize library
         print("   🚀 Initializing RFM69 library...")
-        # We pass reset=None because we already handled it manually and stably
-        rfm69 = adafruit_rfm69.RFM69(spi, cs, None, RADIO_FREQ_MHZ, baudrate=1000000)
+        # Now passing the 'reset' object correctly to avoid the NoneType crash
+        rfm69 = adafruit_rfm69.RFM69(spi, cs, reset, RADIO_FREQ_MHZ, baudrate=1000000)
         
         # Configure radio
         rfm69.tx_power = TX_POWER

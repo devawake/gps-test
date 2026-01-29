@@ -114,9 +114,9 @@ def setup_radio():
         except Exception as e:
             print(f"   ⚠️  Could not perform raw version check: {e}")
 
-        # Initialize radio (pass reset=None since we already did it)
+        # Initialize radio (using the reset pin we already set up)
         print("   🚀 Initializing RFM69 library...")
-        rfm69 = adafruit_rfm69.RFM69(spi, cs, None, RADIO_FREQ_MHZ)
+        rfm69 = adafruit_rfm69.RFM69(spi, cs, reset, RADIO_FREQ_MHZ)
         
         # Configure radio
         rfm69.tx_power = TX_POWER

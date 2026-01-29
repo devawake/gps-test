@@ -79,44 +79,19 @@ def setup_radio():
         reset = digitalio.DigitalInOut(RESET_PIN)
         reset.direction = digitalio.Direction.OUTPUT
         
-        # Manual Reset sequence (100ms High pulse)
+        # Manual Reset sequence
         print("   🔄 Resetting radio hardware...")
         reset.value = False
-        time.sleep(0.05)
+        time.sleep(0.1)
         reset.value = True
         time.sleep(0.1)
         reset.value = False
-        time.sleep(0.1)
+        time.sleep(0.5)  # Give it plenty of time to stabilize
         
-        # Debug: Try a raw version read before library init
-        print("   🔍 Checking radio version register...")
-        version = 0x00
-        try:
-            # We need to lock the SPI bus to use it
-            while not spi.try_lock():
-                pass
-            try:
-                # Use a very slow speed for the initial check
-                spi.configure(baudrate=100000, polarity=0, phase=0)
-                cs.value = False
-                # Read register 0x10
-                out_buf = bytearray([0x10 & 0x7F, 0x00])
-                in_buf = bytearray(2)
-                spi.write_readinto(out_buf, in_buf)
-                version = in_buf[1]
-                cs.value = True
-            finally:
-                spi.unlock()
-            
-            print(f"   📖 Register 0x10 read: {hex(version)}")
-            if version != 0x24:
-                print(f"   ⚠️  Unexpected version {hex(version)}! Expected 0x24.")
-        except Exception as e:
-            print(f"   ⚠️  Could not perform raw version check: {e}")
-
-        # Initialize radio (using the reset pin we already set up)
+        # Initialize radio
         print("   🚀 Initializing RFM69 library...")
-        rfm69 = adafruit_rfm69.RFM69(spi, cs, reset, RADIO_FREQ_MHZ)
+        # We use a lower baudrate (100kHz) for better reliability on Pi jumper wires
+        rfm69 = adafruit_rfm69.RFM69(spi, cs, reset, RADIO_FREQ_MHZ, baudrate=100000)
         
         # Configure radio
         rfm69.tx_power = TX_POWER
@@ -134,11 +109,9 @@ def setup_radio():
         
     except RuntimeError as e:
         print(f"\n   ❌ Radio initialization error: {e}")
-        if "Invalid RFM69 version" in str(e):
-            print("\n   💡 Troubleshooting specific to version error:")
-            print("      - Your 'radio_diag.py' proved the wiring is correct.")
-            print("      - This usually means a conflict between the kernel SPI driver and the library.")
-            print("      - Try running: 'sudo rmmod spidev' then run this script.")
+        print("\n   💡 Troubleshooting:")
+        print("      - Ensure SPI is enabled: 'ls /dev/spidev*'")
+        print("      - Check MISO/MOSI wiring (not crossed!)")
         return None
     except Exception as e:
         print(f"\n   ❌ Unexpected error: {e}")

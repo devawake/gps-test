@@ -21,7 +21,7 @@ ENCRYPTION_KEY = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
 
 # Transmission settings
 TX_POWER = 20           # dBm (max 20)
-TX_INTERVAL = 2.0       # Seconds between transmissions
+TX_INTERVAL = 2.0       # Seconds between transmissions (fast for range testing)
 
 # Hardware pins
 RST_PIN = 25  # GPIO25
@@ -186,7 +186,7 @@ class RFM69:
         while not (self._read_reg(REG_IRQFLAGS1) & 0x80):
             time.sleep(0.001)
     
-    def send(self, message):
+    def send(self, message, debug=True):
         """Send a message (string or bytes)."""
         if isinstance(message, str):
             message = message.encode('utf-8')
@@ -194,30 +194,56 @@ class RFM69:
         # Limit message length (max 60 bytes to leave room for length byte)
         message = message[:60]
         
+        if debug:
+            print("     [1] Going to standby...")
+        
         # Go to standby mode
         self._set_mode(MODE_STANDBY)
         
-        # Wait for FIFO empty
+        if debug:
+            print("     [2] Waiting for FIFO empty...")
+        
+        # Wait for FIFO empty with timeout
+        fifo_timeout = time.time() + 1.0
         while not (self._read_reg(REG_IRQFLAGS2) & 0x40):
+            if time.time() > fifo_timeout:
+                print("     ✗ FIFO empty timeout!")
+                return False
             time.sleep(0.001)
+        
+        if debug:
+            print(f"     [3] Writing {len(message)+1} bytes to FIFO...")
         
         # Write to FIFO: length byte + data
         payload = [len(message)] + list(message)
         self._write_fifo(payload)
         
+        if debug:
+            print("     [4] Switching to TX mode...")
+        
         # Switch to TX mode
         self._set_mode(MODE_TX)
+        
+        if debug:
+            print("     [5] Waiting for PacketSent flag...")
         
         # Wait for packet sent (PacketSent flag in IRQFLAGS2)
         timeout = time.time() + 2.0
         while not (self._read_reg(REG_IRQFLAGS2) & 0x08):
             if time.time() > timeout:
+                irq1 = self._read_reg(REG_IRQFLAGS1)
+                irq2 = self._read_reg(REG_IRQFLAGS2)
+                print(f"     ✗ TX timeout! IRQ1=0x{irq1:02X} IRQ2=0x{irq2:02X}")
                 self._set_mode(MODE_STANDBY)
-                raise RuntimeError("TX timeout")
+                return False
             time.sleep(0.001)
+        
+        if debug:
+            print("     [6] Back to standby...")
         
         # Back to standby
         self._set_mode(MODE_STANDBY)
+        return True
     
     def close(self):
         """Clean up."""

@@ -45,22 +45,33 @@ SEND_INTERVAL = 2.0         # Seconds between messages
 
 
 def setup_radio():
-    """Initialize the RFM69 radio."""
+    """Initialize the RFM69 radio with deep diagnostics."""
     print("🔧 Initializing radio...")
     
-    # First, try to cleanup any lingering GPIO state
-    # cleanup_gpio()  # Removed as it can conflict with Blinka
-    time.sleep(0.1)
+    # 1. System-level checks
+    import os
+    import subprocess
     
-    # Import Adafruit libraries
+    # Check for spidev
+    spi_devs = [f for f in os.listdir('/dev') if f.startswith('spidev')]
+    print(f"   📂 SPI Devices: {spi_devs}")
+    
+    # Check for pigpiod conflict
+    try:
+        pg_check = subprocess.check_output(["pgrep", "pigpiod"]).decode().strip()
+        print(f"   ⚠️  Warning: pigpiod is running (PID {pg_check}). This can interfere with GPIO!")
+    except:
+        pass
+
+    # 2. Imports
     try:
         import board
         import busio
         import digitalio
         import adafruit_rfm69
+        import RPi.GPIO as GPIO
     except ImportError as e:
         print(f"   ❌ Missing library: {e}")
-        print("   Run: pip install adafruit-circuitpython-rfm69")
         sys.exit(1)
     
     # Pin configuration
@@ -68,30 +79,57 @@ def setup_radio():
     RESET_PIN = board.D25       # GPIO25 - Reset
     
     try:
-        # Setup SPI
+        # 3. Setup SPI (standard SPI0)
         spi = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
         
-        # Setup pins
+        # 4. Setup Reset Pin
+        # We'll use the library's pin object
+        reset = digitalio.DigitalInOut(RESET_PIN)
+        reset.direction = digitalio.Direction.OUTPUT
+        
+        # 5. Hardware Reset (Datasheet process)
+        print("   🔄 Resetting radio hardware...")
+        reset.value = True
+        time.sleep(0.1)
+        reset.value = False
+        time.sleep(0.2)  # Wait for radio to wake up
+        
+        # 6. Setup CS Pin
         cs = digitalio.DigitalInOut(CS_PIN)
         cs.direction = digitalio.Direction.OUTPUT
         cs.value = True
         
-        reset = digitalio.DigitalInOut(RESET_PIN)
-        reset.direction = digitalio.Direction.OUTPUT
+        # 7. MANUAL DIAGNOSTIC CHECK
+        # Try to read the version register manually before the library starts
+        print("   � Performing manual version check (1MHz)...")
+        version = 0x00
+        while not spi.try_lock():
+            pass
+        try:
+            spi.configure(baudrate=1000000, polarity=0, phase=0)
+            cs.value = False
+            # Read Reg 0x10: Send 0x10, then read response
+            spi.write(bytearray([0x10 & 0x7F]))
+            result = bytearray(1)
+            spi.readinto(result)
+            version = result[0]
+            cs.value = True
+        finally:
+            spi.unlock()
+            
+        print(f"   📖 Manual read of Reg 0x10: {hex(version)}")
         
-        # Manual Reset sequence
-        print("   🔄 Resetting radio hardware...")
-        reset.value = False
-        time.sleep(0.1)
-        reset.value = True
-        time.sleep(0.1)
-        reset.value = False
-        time.sleep(0.5)  # Give it plenty of time to stabilize
+        if version != 0x24:
+            print(f"   ⚠️  Manual check failed! Expected 0x24, got {hex(version)}.")
+            if version == 0x00:
+                print("      (Probable MISO connection issue or CS conflict)")
+            elif version == 0xFF:
+                print("      (Probable MOSI/SCK connection issue)")
         
-        # Initialize radio
+        # 8. Initialize library
         print("   🚀 Initializing RFM69 library...")
-        # We use a lower baudrate (100kHz) for better reliability on Pi jumper wires
-        rfm69 = adafruit_rfm69.RFM69(spi, cs, reset, RADIO_FREQ_MHZ, baudrate=100000)
+        # We pass reset=None because we already handled it manually and stably
+        rfm69 = adafruit_rfm69.RFM69(spi, cs, None, RADIO_FREQ_MHZ, baudrate=1000000)
         
         # Configure radio
         rfm69.tx_power = TX_POWER
@@ -109,12 +147,11 @@ def setup_radio():
         
     except RuntimeError as e:
         print(f"\n   ❌ Radio initialization error: {e}")
-        print("\n   💡 Troubleshooting:")
-        print("      - Ensure SPI is enabled: 'ls /dev/spidev*'")
-        print("      - Check MISO/MOSI wiring (not crossed!)")
         return None
     except Exception as e:
         print(f"\n   ❌ Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 

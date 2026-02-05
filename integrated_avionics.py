@@ -305,6 +305,10 @@ class Sensors:
 def main():
     print("--- INTEGRATED AVIONICS ---")
     
+    # Global GPIO Setup
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setwarnings(False)
+    
     buzzer = Buzzer(PIN_BUZZER)
     buzzer.startup_sequence()
     

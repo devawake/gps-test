@@ -198,6 +198,12 @@ class Buzzer:
         time.sleep(0.05)
         self.beep(2000, 0.05)
 
+    def heartbeat_tone(self):
+        # "Lub-dub" sound: Low pitch, short duration
+        self.beep(800, 0.05)
+        time.sleep(0.05)
+        self.beep(800, 0.05)
+
 # ==========================================
 # SENSOR DRIVERS
 # ==========================================
@@ -353,8 +359,6 @@ def main():
             # Send
             if radio.send(packet):
                 print("   -> Sent OK")
-                # Optional: very short blip on consistency? 
-                # buzzer.beep(4000, 0.01) 
             else:
                 print("   -> Send Failed")
                 
@@ -364,6 +368,10 @@ def main():
                 print("   [GPS LOCKED]")
                 # buzzer.lock_tone()
             
+            # Heartbeat every ~2s (10 packets @ 5Hz)
+            if count % 10 == 0:
+                threading.Thread(target=buzzer.heartbeat_tone).start()
+
             count += 1
             elapsed = time.time() - start_t
             if elapsed < TX_INTERVAL:
